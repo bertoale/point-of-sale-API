@@ -2,19 +2,43 @@ import { User } from "../models/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import jwt from "jsonwebtoken";
 import { Success, Error } from "../utils/response.js";
+import bcrypt from "bcrypt";
+import { Config } from "../configs/config.js";
 
 export const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
+  // Cari user berdasarkan email
   const user = await User.findOne({ where: { email } });
-  if (!user || !(await user.validPassword(password))) {
+  if (!user) {
     return Error(res, 401, "Invalid email or password");
   }
-  const token = jwt.sign(
-    { id: user.id, email: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-  return Success(res, 200, { token });
+  // Cek password
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) {
+    return Error(res, 401, "Invalid email or password");
+  }
+  // Buat token JWT
+  const token = jwt.sign({ id: user.id }, Config.JWT_SECRET, {
+    expiresIn: Config.JWT_EXPIRES_IN,
+  });
+
+  // SET COOKIE 🔥
+  res.cookie("token", token, {
+    httpOnly: true, // tidak bisa diakses JS
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 24 * 60 * 60 * 1000, // 1 hari
+  });
+
+  return Success(res, 200, "Login successful", {
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
+    token: token,
+  });
 });
 
 export const UpdateUser = asyncHandler(async (req, res) => {
@@ -27,7 +51,7 @@ export const UpdateUser = asyncHandler(async (req, res) => {
   if (email) user.email = email;
   if (password) user.password = password;
   await user.save();
-  return Success(res, 200, { message: "Profile updated successfully" });
+  return Success(res, 200, "Profile updated successfully");
 });
 
 export const createUser = asyncHandler(async (req, res) => {
@@ -37,7 +61,7 @@ export const createUser = asyncHandler(async (req, res) => {
     return Error(res, 400, "Email already in use");
   }
   const newUser = await User.create({ name, role, email, password });
-  return Success(res, 201, {
+  return Success(res, 201, "User created successfully", {
     id: newUser.id,
     name: newUser.name,
     role: newUser.role,
@@ -49,5 +73,5 @@ export const getUsers = asyncHandler(async (req, res) => {
   const users = await User.findAll({
     attributes: ["id", "name", "role", "email", "createdAt", "updatedAt"],
   });
-  return Success(res, 200, users);
+  return Success(res, 200, "Users retrieved successfully", users);
 });

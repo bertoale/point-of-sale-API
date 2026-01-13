@@ -37,7 +37,7 @@ export const getAllSales = asyncHandler(async (req, res) => {
       },
     ],
   });
-  return Success(res, 200, { sales });
+  return Success(res, 200, "Sales retrieved successfully", sales);
 });
 
 export const getSaleById = asyncHandler(async (req, res) => {
@@ -70,7 +70,7 @@ export const getSaleById = asyncHandler(async (req, res) => {
   if (!sale) {
     return Error(res, 404, "Sale not found");
   }
-  return Success(res, 200, { sale });
+  return Success(res, 200, "Sale retrieved successfully", sale);
 });
 
 export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
@@ -111,7 +111,7 @@ export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
       },
     ],
   });
-  return Success(res, 200, { sales });
+  return Success(res, 200, "Sales retrieved successfully", { sales });
 });
 
 export const createSale = asyncHandler(async (req, res) => {
@@ -149,7 +149,12 @@ export const createSale = asyncHandler(async (req, res) => {
 
       const subtotal = quantity * unitPrice;
       totalPrice += subtotal;
-      validatedItems.push({ product, quantity, unitPrice, subtotal });
+      validatedItems.push({
+        productId: product.id,
+        quantity,
+        unitPrice,
+        subtotal,
+      });
     }
 
     // Create sale record
@@ -173,8 +178,12 @@ export const createSale = asyncHandler(async (req, res) => {
         },
         { transaction: t }
       );
-      item.product.stock -= item.quantity;
-      await item.product.save({ transaction: t });
+
+      // Decrement stock atomically (race condition safe)
+      await Product.decrement(
+        { stock: item.quantity },
+        { where: { id: item.product.id }, transaction: t }
+      );
     }
 
     await t.commit();
@@ -203,7 +212,7 @@ export const createSale = asyncHandler(async (req, res) => {
         },
       ],
     });
-    return Success(res, 201, completeSale);
+    return Success(res, 201, "Sale created successfully", completeSale);
   } catch (error) {
     await t.rollback();
     return Error(res, 500, { message: error.message });
@@ -225,12 +234,11 @@ export const voidSale = asyncHandler(async (req, res) => {
 
   const t = await sequelize.transaction();
   try {
-    // Rollback stock
+    // Rollback stock (atomic increment)
     for (const detail of sale.saleDetails) {
-      const product = detail.Product;
-      await product.update(
-        { stock: product.stock + detail.quantity },
-        { transaction: t }
+      await Product.increment(
+        { stock: detail.quantity },
+        { where: { id: detail.Product.id }, transaction: t }
       );
     }
 
@@ -281,7 +289,7 @@ export const getSalesReport = asyncHandler(async (req, res) => {
       },
     ],
   });
-  return Success(res, 200, { sales });
+  return Success(res, 200, "Sales retrieved successfully", sales);
 });
 
 export const editSale = asyncHandler(async (req, res) => {
@@ -309,13 +317,12 @@ export const editSale = asyncHandler(async (req, res) => {
   // }
 
   await sequelize.transaction(async (t) => {
-    /** 1️⃣ Rollback stok lama */
+    /** 1️⃣ Rollback stok lama (atomic increment) */
     for (const detail of sale.saleDetails) {
-      const product = await Product.findByPk(detail.productId, {
-        transaction: t,
-      });
-      product.stock += detail.quantity;
-      await product.save({ transaction: t });
+      await Product.increment(
+        { stock: detail.quantity },
+        { where: { id: detail.productId }, transaction: t }
+      );
     }
 
     /** 2️⃣ Hapus sale detail lama */
@@ -343,20 +350,17 @@ export const editSale = asyncHandler(async (req, res) => {
       }
 
       await SaleDetail.create(
-        {
-          saleId,
-          productId,
-          quantity,
-          unitPrice,
-        },
+        { saleId, productId, quantity, unitPrice },
         { transaction: t }
       );
 
-      /** 4️⃣ Kurangi stok baru */
-      product.stock -= quantity;
-      await product.save({ transaction: t });
+      /** 4️⃣ Kurangi stok baru (atomic decrement) */
+      await Product.decrement(
+        { stock: quantity },
+        { where: { id: productId }, transaction: t }
+      );
     }
   });
 
-  return Success(res, 200, { message: "Sale updated successfully" });
+  return Success(res, 200, "Sale updated successfully");
 });
