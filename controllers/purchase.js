@@ -50,7 +50,7 @@ export const getAllPurchases = asyncHandler(async (req, res) => {
     throw new Error("Purchases not found");
   }
 
-  return Success(res, 200, "Purchases retrieved successfully", { purchases });
+  return Success(res, 200, "Purchases retrieved successfully", purchases);
 });
 
 export const GetPurchasesById = asyncHandler(async (req, res) => {
@@ -90,7 +90,7 @@ export const GetPurchasesById = asyncHandler(async (req, res) => {
   if (!purchase) {
     return Error(res, 404, "Purchase not found");
   }
-  return Success(res, 200, { purchase });
+  return Success(res, 200, "Purchase retrieved successfully", purchase);
 });
 
 export const createPurchase = asyncHandler(async (req, res) => {
@@ -157,23 +157,26 @@ export const createPurchase = asyncHandler(async (req, res) => {
     for (const item of validatedItems) {
       await PurchaseDetail.create(
         {
-          PurchaseId: purchase.id,
-          ProductId: item.product.id,
+          purchaseId: purchase.id,
+          productId: item.product.id,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           subtotal: item.subtotal,
         },
         { transaction: t }
       );
-    }
 
-    await items.product.update(
-      {
-        stock: items.product.stock + items.quantity,
-        purchasePrice: items.unitPrice,
-      },
-      { transaction: t }
-    );
+      // ✅ UPDATE STOCK (atomic operation to prevent race conditions)
+      await Product.increment(
+        { stock: item.quantity },
+        { where: { id: item.product.id }, transaction: t }
+      );
+
+      await Product.update(
+        { purchasePrice: item.unitPrice },
+        { where: { id: item.product.id }, transaction: t }
+      );
+    }
 
     await t.commit();
 
@@ -207,9 +210,7 @@ export const createPurchase = asyncHandler(async (req, res) => {
         },
       ],
     });
-    return Success(res, 201, "Purchase created successfully", {
-      completePurchase,
-    });
+    return Success(res, 201, "Purchase created successfully", completePurchase);
   } catch (error) {
     await t.rollback();
     throw error; // will be caught by asyncHandler
@@ -230,17 +231,16 @@ export const voidPurchase = asyncHandler(async (req, res) => {
   // start transaction
   const t = await sequelize.transaction();
   try {
-    // revert stock for each purchase detail
+    // revert stock for each purchase detail (atomic decrement)
     for (const detail of purchase.PurchaseDetails) {
-      const product = detail.Product;
-      await product.update(
-        { stock: product.stock - detail.quantity },
-        { transaction: t }
+      await Product.decrement(
+        { stock: detail.quantity },
+        { where: { id: detail.Product.id }, transaction: t }
       );
     }
     // delete purchase details
     await PurchaseDetail.destroy(
-      { where: { PurchaseId: purchaseId } },
+      { where: { purchaseId: purchaseId } },
       { transaction: t }
     );
     // delete purchase
@@ -276,18 +276,15 @@ export const editPurchase = asyncHandler(async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
-    /** 1️⃣ Rollback stok lama */
+    /** 1️⃣ Rollback stok lama (atomic decrement) */
     for (const detail of purchase.PurchaseDetails) {
-      const product = detail.Product;
-      await product.update(
-        { stock: product.stock - detail.quantity },
-        { transaction: t }
+      await Product.decrement(
+        { stock: detail.quantity },
+        { where: { id: detail.Product.id }, transaction: t }
       );
-    }
-
-    /** 2️⃣ Hapus purchase detail lama */
+    } /** 2️⃣ Hapus purchase detail lama */
     await PurchaseDetail.destroy(
-      { where: { PurchaseId: purchaseId } },
+      { where: { purchaseId: purchaseId } },
       { transaction: t }
     );
 
@@ -298,24 +295,24 @@ export const editPurchase = asyncHandler(async (req, res) => {
       const { productId, quantity, unitPrice } = item;
 
       if (!productId || !quantity || !unitPrice) {
-        throw new Error(
+        return Error(
+          res,
+          400,
           "Each item must have productId, quantity, and unitPrice"
         );
       }
 
       const product = await Product.findByPk(productId, { transaction: t });
       if (!product) {
-        throw new Error(`Product with ID ${productId} not found`);
+        return Error(res, 404, `Product with ID ${productId} not found`);
       }
 
       const subtotal = quantity * unitPrice;
-      totalAmount += subtotal;
-
-      /** 4️⃣ Simpan detail baru */
+      totalAmount += subtotal; /** 4️⃣ Simpan detail baru */
       await PurchaseDetail.create(
         {
-          PurchaseId: purchaseId,
-          ProductId: productId,
+          purchaseId: purchaseId,
+          productId: productId,
           quantity,
           unitPrice,
           subtotal,
@@ -323,13 +320,15 @@ export const editPurchase = asyncHandler(async (req, res) => {
         { transaction: t }
       );
 
-      /** 5️⃣ Update stok + harga beli */
-      await product.update(
-        {
-          stock: product.stock + quantity,
-          purchasePrice: unitPrice,
-        },
-        { transaction: t }
+      /** 5️⃣ Update stok + harga beli (atomic increment) */
+      await Product.increment(
+        { stock: quantity },
+        { where: { id: productId }, transaction: t }
+      );
+
+      await Product.update(
+        { purchasePrice: unitPrice },
+        { where: { id: productId }, transaction: t }
       );
     }
 
@@ -392,5 +391,5 @@ export const getPurchasesReport = asyncHandler(async (req, res) => {
       ["createdAt", "DESC"],
     ],
   });
-  return Success(res, 200, "Purchase report generated", { purchases });
+  return Success(res, 200, "Purchase report generated", purchases);
 });
