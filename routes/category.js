@@ -9,7 +9,7 @@ import express from "express";
 import { authenticate, authorize } from "../middlewares/auth.js";
 
 const router = express.Router();
-router.post("/create", authenticate, authorize("owner"), CreateCategory);
+router.post("/", authenticate, authorize("owner"), CreateCategory);
 router.get("/", authenticate, authorize("owner"), GetAllCategories);
 router.get("/:id", authenticate, authorize("owner"), GetCategoryById);
 router.put("/:id", authenticate, authorize("owner"), UpdateCategory);
