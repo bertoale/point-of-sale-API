@@ -3,6 +3,7 @@ import {
   editSale,
   getAllSales,
   getSaleByCashierAndDate,
+  // getsaleByCurrentUserAndDate,
   getSaleById,
   getSalesReport,
   voidSale,
