@@ -51,17 +51,17 @@ Product.belongsTo(Category, { foreignKey: "categoryId" });
 Supplier.hasMany(Purchase, { foreignKey: "supplierId" });
 Purchase.belongsTo(Supplier, { foreignKey: "supplierId" });
 //purchase - purchaseDetail
-Purchase.hasMany(PurchaseDetail, { foreignKey: "PurchaseId" });
-PurchaseDetail.belongsTo(Purchase, { foreignKey: "PurchaseId" });
+Purchase.hasMany(PurchaseDetail, { foreignKey: "purchaseId" });
+PurchaseDetail.belongsTo(Purchase, { foreignKey: "purchaseId" });
 //product - purchaseDetail
-Product.hasMany(PurchaseDetail, { foreignKey: "ProductId" });
-PurchaseDetail.belongsTo(Product, { foreignKey: "ProductId" });
+Product.hasMany(PurchaseDetail, { foreignKey: "productId" });
+PurchaseDetail.belongsTo(Product, { foreignKey: "productId" });
 //sale - saleDetail
-Sale.hasMany(SaleDetail, { foreignKey: "SaleId" });
-SaleDetail.belongsTo(Sale, { foreignKey: "SaleId" });
+Sale.hasMany(SaleDetail, { foreignKey: "saleId" });
+SaleDetail.belongsTo(Sale, { foreignKey: "saleId" });
 //product - saleDetail
-Product.hasMany(SaleDetail, { foreignKey: "ProductId" });
-SaleDetail.belongsTo(Product, { foreignKey: "ProductId" });
+Product.hasMany(SaleDetail, { foreignKey: "productId" });
+SaleDetail.belongsTo(Product, { foreignKey: "productId" });
 // user - purchase
 User.hasMany(Purchase, { foreignKey: "userId" });
 Purchase.belongsTo(User, { foreignKey: "userId" });

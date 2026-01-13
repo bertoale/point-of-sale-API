@@ -9,7 +9,7 @@ export default (sequelize) => {
         primaryKey: true,
         autoIncrement: true,
       },
-      CategoryId: {
+      categoryId: {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
@@ -24,18 +24,18 @@ export default (sequelize) => {
           isDecimal: true,
           min: 0,
         },
-        purchasePrice: {
-          type: DataTypes.DECIMAL(10, 2),
-          allowNull: false,
-          validate: {
-            isDecimal: true,
-            min: 0,
-          },
+      },
+      purchasePrice: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        validate: {
+          isDecimal: true,
+          min: 0,
         },
-        stock: {
-          type: DataTypes.INTEGER,
-          allowNull: false,
-        },
+      },
+      stock: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
       },
     },
     {

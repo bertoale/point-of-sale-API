@@ -1,6 +1,4 @@
 import { DataTypes } from "sequelize";
-import supplier from "./supplier";
-import user from "./user";
 
 export default (sequelize) => {
   const User = sequelize.define(
@@ -24,7 +22,7 @@ export default (sequelize) => {
         allowNull: false,
         defaultValue: DataTypes.NOW,
       },
-      totalPrice: {
+      totalAmount: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
         validate: {

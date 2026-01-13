@@ -9,11 +9,11 @@ export default (sequelize) => {
         primaryKey: true,
         autoIncrement: true,
       },
-      SaleId: {
+      saleId: {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
-      ProductId: {
+      productId: {
         type: DataTypes.INTEGER,
         allowNull: false,
       },

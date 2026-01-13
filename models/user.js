@@ -1,4 +1,5 @@
 import { DataTypes } from "sequelize";
+import bcrypt from "bcrypt";
 
 export default (sequelize) => {
   const User = sequelize.define(
@@ -8,6 +9,11 @@ export default (sequelize) => {
         type: DataTypes.INTEGER,
         primaryKey: true,
         autoIncrement: true,
+      },
+      isActive: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: true,
+        allowNull: false,
       },
       name: {
         type: DataTypes.STRING,
@@ -25,6 +31,11 @@ export default (sequelize) => {
         validate: {
           isEmail: true,
         },
+      },
+      phone: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true,
       },
       password: {
         type: DataTypes.STRING,
