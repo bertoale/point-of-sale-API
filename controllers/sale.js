@@ -113,109 +113,69 @@ export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
   });
   return Success(res, 200, "Sales retrieved successfully", { sales });
 });
-
 export const createSale = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { items } = req.body;
 
-  if (!userId) {
-    return Error(res, 400, "User unauthenticated");
-  }
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    return Error(res, 400, "Invalid sale data");
-  }
+  if (!userId) return Error(res, 400, "User unauthenticated");
+  if (!Array.isArray(items) || items.length === 0)
+    return Error(res, 400, "Items are required");
 
   const t = await sequelize.transaction();
 
   try {
     let totalPrice = 0;
-    let validatedItems = [];
 
-    // Validate items and calculate total price
+    const sale = await Sale.create(
+      { userId, totalPrice: 0 },
+      { transaction: t }
+    );
+
     for (const item of items) {
-      const productId = item.productId;
-      const quantity = item.quantity;
-      const unitPrice = item.unitPrice;
-      if (!productId || !quantity || !unitPrice) {
-        throw new Error(
-          "Each item must have productId, quantity, and unitPrice"
-        );
+      const productId = Number(item.productId);
+      const quantity = Number(item.quantity);
+
+      if (!productId || !quantity) {
+        return Error("Each item must have productId and quantity");
       }
 
       const product = await Product.findByPk(productId, { transaction: t });
       if (!product) {
-        throw new Error(`Product with ID ${productId} not found`);
+        return Error(`Product with ID ${productId} not found`);
       }
 
-      const subtotal = quantity * unitPrice;
+      // if (product.stock < quantity) {
+      //   return Error(`Insufficient stock for product ${product.name}`);
+      // }
+
+      const unitPrice = Number(product.sellingPrice);
+      const subtotal = unitPrice * quantity;
       totalPrice += subtotal;
-      validatedItems.push({
-        productId: product.id,
-        quantity,
-        unitPrice,
-        subtotal,
-      });
-    }
 
-    // Create sale record
-    const sales = await Sale.create(
-      {
-        totalPrice,
-        userId: userId,
-      },
-      { transaction: t }
-    );
-
-    // Create sale details and update product stock
-    for (const item of validatedItems) {
       await SaleDetail.create(
         {
-          saleId: sales.id,
-          productId: item.product.id,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          subtotal: item.subtotal,
+          saleId: sale.id,
+          productId,
+          quantity,
+          unitPrice,
+          subtotal,
         },
         { transaction: t }
       );
 
-      // Decrement stock atomically (race condition safe)
       await Product.decrement(
-        { stock: item.quantity },
-        { where: { id: item.product.id }, transaction: t }
+        { stock: quantity },
+        { where: { id: productId }, transaction: t }
       );
     }
 
+    await sale.update({ totalPrice }, { transaction: t });
     await t.commit();
-    const completeSale = await Sale.findByPk(sales.id, {
-      include: [
-        {
-          model: SaleDetail,
-          as: "saleDetails",
-          include: [
-            {
-              model: Product,
-              as: "product",
-              include: [
-                {
-                  model: Category,
-                  as: "category",
-                },
-              ],
-            },
-          ],
-        },
-        {
-          model: User,
-          as: "cashier",
-          attributes: ["id", "name", "email", "role"],
-        },
-      ],
-    });
-    return Success(res, 201, "Sale created successfully", completeSale);
+
+    return Success(res, 201, "Sale created successfully");
   } catch (error) {
     await t.rollback();
-    return Error(res, 500, { message: error.message });
+    return Error(res, 500, error.message);
   }
 });
 
@@ -235,7 +195,7 @@ export const voidSale = asyncHandler(async (req, res) => {
   const t = await sequelize.transaction();
   try {
     // Rollback stock (atomic increment)
-    for (const detail of sale.saleDetails) {
+    for (const detail of sale.SaleDetails) {
       await Product.increment(
         { stock: detail.quantity },
         { where: { id: detail.Product.id }, transaction: t }
@@ -305,37 +265,33 @@ export const editSale = asyncHandler(async (req, res) => {
   }
 
   const sale = await Sale.findByPk(saleId, {
-    include: [{ model: SaleDetail, as: "saleDetails" }],
+    include: [{ model: SaleDetail }],
   });
 
   if (!sale) {
     return Error(res, 404, "Sale not found");
   }
 
-  // if (sale.status === "voided") {
-  //   return Error(res, 400, "Voided sale cannot be edited");
-  // }
-
   await sequelize.transaction(async (t) => {
-    /** 1️⃣ Rollback stok lama (atomic increment) */
-    for (const detail of sale.saleDetails) {
+    /** 1️⃣ Rollback stok lama */
+    for (const detail of sale.SaleDetails) {
       await Product.increment(
         { stock: detail.quantity },
         { where: { id: detail.productId }, transaction: t }
       );
     }
 
-    /** 2️⃣ Hapus sale detail lama */
+    /** 2️⃣ Hapus detail lama */
     await SaleDetail.destroy({ where: { saleId } }, { transaction: t });
 
-    /** 3️⃣ Validasi & simpan item baru */
-    for (const item of items) {
-      const { productId, quantity, unitPrice } = item;
+    let totalPrice = 0;
 
-      if (!productId || !quantity || !unitPrice) {
-        throw new Error(
-          "Each item must have productId, quantity, and unitPrice"
-        );
+    /** 3️⃣ Simpan item baru */
+    for (const item of items) {
+      const { productId, quantity } = item;
+
+      if (!productId || !quantity) {
+        throw new Error("Each item must have productId and quantity");
       }
 
       const product = await Product.findByPk(productId, { transaction: t });
@@ -345,21 +301,34 @@ export const editSale = asyncHandler(async (req, res) => {
 
       if (product.stock < quantity) {
         throw new Error(
-          `Insufficient stock for product ID ${productId}. Available: ${product.stock}, Requested: ${quantity}`
+          `Insufficient stock for product ${product.name}. Available: ${product.stock}`
         );
       }
 
+      const unitPrice = product.sellingPrice;
+      const subtotal = unitPrice * quantity;
+      totalPrice += subtotal;
+
       await SaleDetail.create(
-        { saleId, productId, quantity, unitPrice },
+        {
+          saleId,
+          productId,
+          quantity,
+          unitPrice,
+          subtotal,
+        },
         { transaction: t }
       );
 
-      /** 4️⃣ Kurangi stok baru (atomic decrement) */
+      /** 4️⃣ Kurangi stok */
       await Product.decrement(
         { stock: quantity },
         { where: { id: productId }, transaction: t }
       );
     }
+
+    /** 5️⃣ Update total sale */
+    await sale.update({ totalPrice }, { transaction: t });
   });
 
   return Success(res, 200, "Sale updated successfully");

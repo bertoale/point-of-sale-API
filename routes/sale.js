@@ -10,7 +10,7 @@ import {
 import express from "express";
 import { authenticate, authorize } from "../middlewares/auth.js";
 const router = express.Router();
-router.post("/create", authenticate, authorize("cashier", "owner"), createSale);
+router.post("/", authenticate, authorize(["cashier", "owner"]), createSale);
 router.get("/report", authenticate, authorize("owner"), getSalesReport);
 router.get(
   "/cashier/:cashierId/date/:date",
