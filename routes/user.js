@@ -10,7 +10,7 @@ import express from "express";
 const router = express.Router();
 
 router.post("/login", login);
-router.post("/create", authenticate, authorize("owner"), createUser);
+router.post("/", authenticate, authorize("owner"), createUser);
 router.get("/", authenticate, authorize("owner"), getUsers);
 router.put("/:id", authenticate, authorize("owner"), UpdateUser);
 export default router;

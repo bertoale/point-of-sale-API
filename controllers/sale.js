@@ -6,6 +6,7 @@ import {
   User,
   sequelize,
 } from "../models/index.js";
+import ExcelJS from "exceljs";
 import user from "../models/user.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { Success, Error } from "../utils/response.js";
@@ -16,24 +17,16 @@ export const getAllSales = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
-        as: "saleDetails",
         include: [
           {
             model: Product,
-            as: "product",
-            include: [
-              {
-                model: Category,
-                as: "category",
-              },
-            ],
+            attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
-        as: "cashier",
-        attributes: ["id", "name", "email", "role"],
+        attributes: ["id", "name"],
       },
     ],
   });
@@ -46,24 +39,20 @@ export const getSaleById = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
-        as: "saleDetails",
         include: [
           {
             model: Product,
-            as: "product",
-            include: [
-              {
-                model: Category,
-                as: "category",
-              },
-            ],
+            attributes: ["id", "name", "sellingPrice"],
+          },
+          {
+            model: User,
+            attributes: ["id", "name"],
           },
         ],
       },
       {
         model: User,
-        as: "cashier",
-        attributes: ["id", "name", "email", "role"],
+        attributes: ["id", "name"],
       },
     ],
   });
@@ -73,46 +62,45 @@ export const getSaleById = asyncHandler(async (req, res) => {
   return Success(res, 200, "Sale retrieved successfully", sale);
 });
 
-export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
+export const getSaleByCurrentUserAndDate = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { startDate, endDate } = req.query;
 
   if (!userId) {
     return Error(res, 400, "User unauthenticated");
   }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setDate(end.getDate() + 1); // +1 hari
+
   const sales = await Sale.findAll({
     where: {
-      userId: userId,
+      userId,
       date: {
-        [Op.between]: [new Date(startDate), new Date(endDate)],
+        [Op.between]: [start, end],
       },
     },
     include: [
       {
         model: SaleDetail,
-        as: "saleDetails",
         include: [
           {
             model: Product,
-            as: "product",
-            include: [
-              {
-                model: Category,
-                as: "category",
-              },
-            ],
+            attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
-        as: "cashier",
-        attributes: ["id", "name", "email", "role"],
+        attributes: ["id", "name"],
       },
     ],
   });
+
   return Success(res, 200, "Sales retrieved successfully", { sales });
 });
+
 export const createSale = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { items } = req.body;
@@ -214,38 +202,34 @@ export const voidSale = asyncHandler(async (req, res) => {
   }
 });
 
-export const getSalesReport = asyncHandler(async (req, res) => {
+export const getSalesByDate = asyncHandler(async (req, res) => {
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return Error(res, 400, "startDate and endDate are required");
   }
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setDate(end.getDate() + 1); // +1 hari
+
   const sales = await Sale.findAll({
     where: {
       date: {
-        [Op.between]: [new Date(startDate), new Date(endDate)],
+        [Op.between]: [start, end],
       },
     },
     include: [
       {
         model: SaleDetail,
-        as: "saleDetails",
         include: [
           {
             model: Product,
-            as: "product",
-            include: [
-              {
-                model: Category,
-                as: "category",
-              },
-            ],
+            attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
-        as: "cashier",
-        attributes: ["id", "name", "email", "role"],
+        attributes: ["id", "name"],
       },
     ],
   });
@@ -291,16 +275,16 @@ export const editSale = asyncHandler(async (req, res) => {
       const { productId, quantity } = item;
 
       if (!productId || !quantity) {
-        throw new Error("Each item must have productId and quantity");
+        return Error(res, 400, "Each item must have productId and quantity");
       }
 
       const product = await Product.findByPk(productId, { transaction: t });
       if (!product) {
-        throw new Error(`Product with ID ${productId} not found`);
+        return Error(`Product with ID ${productId} not found`);
       }
 
       if (product.stock < quantity) {
-        throw new Error(
+        return Error(
           `Insufficient stock for product ${product.name}. Available: ${product.stock}`
         );
       }
@@ -332,4 +316,180 @@ export const editSale = asyncHandler(async (req, res) => {
   });
 
   return Success(res, 200, "Sale updated successfully");
+});
+
+export const exportSalesReportXlsx = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return Error(res, 400, "startDate and endDate are required");
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+
+  const formatDDMMYY = (date) => {
+    const d = new Date(date);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}-${mm}-${yy}`;
+  };
+
+  const sales = await Sale.findAll({
+    where: {
+      date: {
+        [Op.between]: [start, end],
+      },
+    },
+    include: [
+      {
+        model: SaleDetail,
+        include: [{ model: Product, attributes: ["name"] }],
+      },
+      { model: User, attributes: ["name"] },
+    ],
+    order: [["date", "ASC"]],
+  });
+
+  // =========================
+  // CREATE EXCEL
+  // =========================
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Sales Report");
+
+  worksheet.columns = [
+    { header: "Sale ID", key: "saleId", width: 10 },
+    { header: "Tanggal", key: "date", width: 20 },
+    { header: "User", key: "user", width: 15 },
+    { header: "Produk", key: "product", width: 35 },
+    { header: "Qty", key: "qty", width: 8 },
+    { header: "Harga", key: "price", width: 15 },
+    { header: "Subtotal", key: "subtotal", width: 15 },
+    { header: "Total Sale", key: "total", width: 15 },
+  ];
+
+  worksheet.getRow(1).font = { bold: true };
+
+  // =========================
+  // DATA
+  // =========================
+  let currentRow = 2;
+  let grandTotalSales = 0;
+
+  sales.forEach((sale) => {
+    grandTotalSales += Number(sale.totalPrice);
+    const startRow = currentRow;
+
+    sale.SaleDetails.forEach((detail) => {
+      worksheet.addRow({
+        saleId: sale.id,
+        date: sale.date,
+        user: sale.User?.name,
+        product: detail.Product?.name,
+        qty: detail.quantity,
+        price: Number(detail.unitPrice),
+        subtotal: Number(detail.subtotal),
+        total: Number(sale.totalPrice),
+      });
+      currentRow++;
+    });
+
+    const endRow = currentRow - 1;
+
+    if (startRow < endRow) {
+      worksheet.mergeCells(`A${startRow}:A${endRow}`);
+      worksheet.mergeCells(`B${startRow}:B${endRow}`);
+      worksheet.mergeCells(`C${startRow}:C${endRow}`);
+      worksheet.mergeCells(`H${startRow}:H${endRow}`);
+    }
+
+    ["A", "B", "C", "H"].forEach((col) => {
+      worksheet.getCell(`${col}${startRow}`).alignment = {
+        vertical: "middle",
+        horizontal: "center",
+      };
+    });
+  });
+
+  // =========================
+  // GRAND TOTAL (ANGKA SAJA)
+  // =========================
+  const totalRow = worksheet.addRow({
+    total: grandTotalSales,
+  });
+  totalRow.font = { bold: true };
+
+  // =========================
+  // FORMAT
+  // =========================
+  worksheet.getColumn("price").numFmt = '"Rp" #,##0';
+  worksheet.getColumn("subtotal").numFmt = '"Rp" #,##0';
+  worksheet.getColumn("total").numFmt = '"Rp" #,##0';
+  worksheet.getColumn("date").numFmt = "dd-mm-yyyy hh:mm:ss";
+
+  worksheet.eachRow((row) => {
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+  });
+
+  // =========================
+  // RESPONSE
+  // =========================
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=sales_report_${formatDDMMYY(
+      startDate
+    )}_to_${formatDDMMYY(endDate)}.xlsx`
+  );
+
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
+  const cashierId = req.params.cashierId;
+  const { startDate, endDate } = req.query;
+  if (!cashierId) {
+    return Error(res, 400, "cashierId is required");
+  }
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setDate(end.getDate() + 1); // +1 hari
+  const sales = await Sale.findAll({
+    where: {
+      userId: cashierId,
+      date: {
+        [Op.between]: [start, end],
+      },
+    },
+    include: [
+      {
+        model: SaleDetail,
+        include: [
+          {
+            model: Product,
+            attributes: ["id", "name", "sellingPrice"],
+          },
+        ],
+      },
+      {
+        model: User,
+        attributes: ["id", "name"],
+      },
+    ],
+  });
+  return Success(res, 200, "Sales retrieved successfully", sales);
 });

@@ -55,17 +55,18 @@ export const UpdateUser = asyncHandler(async (req, res) => {
 });
 
 export const createUser = asyncHandler(async (req, res) => {
-  const { name, role, email, password } = req.body;
+  const { name, role, email, phone, password } = req.body;
   const existingUser = await User.findOne({ where: { email } });
   if (existingUser) {
     return Error(res, 400, "Email already in use");
   }
-  const newUser = await User.create({ name, role, email, password });
+  const newUser = await User.create({ name, role, phone, email, password });
   return Success(res, 201, "User created successfully", {
     id: newUser.id,
     name: newUser.name,
     role: newUser.role,
     email: newUser.email,
+    phone: newUser.phone,
   });
 });
 

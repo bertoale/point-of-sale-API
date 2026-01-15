@@ -8,6 +8,7 @@ import {
   Sequelize,
   sequelize,
 } from "../models/index.js";
+import ExcelJS from "exceljs";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { Success, Error } from "../utils/response.js";
 import { Op } from "sequelize";
@@ -16,25 +17,13 @@ export const getAllPurchases = asyncHandler(async (req, res) => {
   const purchases = await Purchase.findAll({
     include: [
       { model: User, attributes: ["id", "name"] },
-      { model: Supplier, attributes: ["id", "name", "phoneNumber", "address"] },
+      { model: Supplier, attributes: ["id", "name"] },
       {
         model: PurchaseDetail,
         include: [
           {
             model: Product,
-            attributes: [
-              "id",
-              "name",
-              "sellingPrice",
-              "purchasePrice",
-              "stock",
-            ],
-            include: [
-              {
-                model: Category,
-                attributes: ["id", "name"],
-              },
-            ],
+            attributes: ["id", "name", "purchasePrice"],
           },
         ],
       },
@@ -63,25 +52,13 @@ export const GetPurchasesById = asyncHandler(async (req, res) => {
   const purchase = await Purchase.findByPk(purchaseId, {
     include: [
       { model: User, attributes: ["id", "name"] },
-      { model: Supplier, attributes: ["id", "name", "phoneNumber", "address"] },
+      { model: Supplier, attributes: ["id", "name"] },
       {
         model: PurchaseDetail,
         include: [
           {
             model: Product,
-            attributes: [
-              "id",
-              "name",
-              "sellingPrice",
-              "purchasePrice",
-              "stock",
-            ],
-            include: [
-              {
-                model: Category,
-                attributes: ["id", "name"],
-              },
-            ],
+            attributes: ["id", "name", "purchasePrice"],
           },
         ],
       },
@@ -185,7 +162,7 @@ export const createPurchase = asyncHandler(async (req, res) => {
       include: [
         {
           model: Supplier,
-          attributes: ["id", "name", "phoneNumber", "address"],
+          attributes: ["id", "name"],
         },
         {
           model: PurchaseDetail,
@@ -351,15 +328,19 @@ export const editPurchase = asyncHandler(async (req, res) => {
   }
 });
 
-export const getPurchasesReport = asyncHandler(async (req, res) => {
+export const getPurchasesByDate = asyncHandler(async (req, res) => {
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return Error(res, 400, "startDate and endDate are required");
   }
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setDate(end.getDate() + 1); // +1 hari
+
   const purchases = await Purchase.findAll({
     where: {
       date: {
-        [Op.between]: [new Date(startDate), new Date(endDate)],
+        [Op.between]: [start, end],
       },
     },
     include: [
@@ -369,19 +350,7 @@ export const getPurchasesReport = asyncHandler(async (req, res) => {
         include: [
           {
             model: Product,
-            attributes: [
-              "id",
-              "name",
-              "sellingPrice",
-              "purchasePrice",
-              "stock",
-            ],
-            include: [
-              {
-                model: Category,
-                attributes: ["id", "name"],
-              },
-            ],
+            attributes: ["id", "name", "purchasePrice"],
           },
         ],
       },
@@ -392,4 +361,172 @@ export const getPurchasesReport = asyncHandler(async (req, res) => {
     ],
   });
   return Success(res, 200, "Purchase report generated", purchases);
+});
+
+export const exportPurchaseReportXlsx = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return Error(res, 400, "startDate and endDate are required");
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+
+  const formatDDMMYY = (date) => {
+    const d = new Date(date);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}-${mm}-${yy}`;
+  };
+
+  const purchases = await Purchase.findAll({
+    where: {
+      date: {
+        [Op.between]: [start, end],
+      },
+    },
+    include: [
+      { model: User, attributes: ["name"] }, // Kasir
+      { model: Supplier, attributes: ["name"] },
+      {
+        model: PurchaseDetail,
+        include: [
+          {
+            model: Product,
+            attributes: ["name", "purchasePrice"],
+          },
+        ],
+      },
+    ],
+    order: [["date", "ASC"]],
+  });
+
+  // =========================
+  // CREATE EXCEL
+  // =========================
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Purchase Report");
+
+  worksheet.columns = [
+    { header: "Purchase ID", key: "purchaseId", width: 12 },
+    { header: "Tanggal", key: "date", width: 20 },
+    { header: "Kasir", key: "kasir", width: 18 },
+    { header: "Supplier", key: "supplier", width: 25 },
+    { header: "Produk", key: "product", width: 35 },
+    { header: "Qty", key: "qty", width: 8 },
+    { header: "Harga Beli", key: "price", width: 15 },
+    { header: "Subtotal", key: "subtotal", width: 15 },
+    { header: "Total Purchase", key: "total", width: 18 },
+  ];
+
+  worksheet.getRow(1).font = { bold: true };
+
+  // =========================
+  // DATA + MERGE LOGIC
+  // =========================
+  let currentRow = 2;
+  let grandTotalPurchase = 0;
+
+  purchases.forEach((purchase) => {
+    grandTotalPurchase += Number(purchase.totalAmount);
+
+    const startRow = currentRow;
+
+    // Jika tidak ada detail
+    if (!purchase.PurchaseDetails || purchase.PurchaseDetails.length === 0) {
+      worksheet.addRow({
+        purchaseId: purchase.id,
+        date: purchase.date,
+        kasir: purchase.User?.name,
+        supplier: purchase.Supplier?.name,
+        total: Number(purchase.totalAmount),
+      });
+      currentRow++;
+    } else {
+      purchase.PurchaseDetails.forEach((detail) => {
+        worksheet.addRow({
+          purchaseId: purchase.id,
+          date: purchase.date,
+          kasir: purchase.User?.name,
+          supplier: purchase.Supplier?.name,
+          product: detail.Product?.name,
+          qty: detail.quantity,
+          price: Number(detail.unitPrice),
+          subtotal: Number(detail.subtotal),
+          total: Number(purchase.totalAmount),
+        });
+        currentRow++;
+      });
+    }
+
+    const endRow = currentRow - 1;
+
+    if (startRow < endRow) {
+      worksheet.mergeCells(`A${startRow}:A${endRow}`); // Purchase ID
+      worksheet.mergeCells(`B${startRow}:B${endRow}`); // Tanggal
+      worksheet.mergeCells(`C${startRow}:C${endRow}`); // Kasir
+      worksheet.mergeCells(`D${startRow}:D${endRow}`); // Supplier
+      worksheet.mergeCells(`I${startRow}:I${endRow}`); // Total
+    }
+
+    ["A", "B", "C", "D", "I"].forEach((col) => {
+      worksheet.getCell(`${col}${startRow}`).alignment = {
+        vertical: "middle",
+        horizontal: "center",
+      };
+    });
+  });
+
+  // =========================
+  // GRAND TOTAL (SIMPLE)
+  // =========================
+  const totalRow = worksheet.addRow({
+    total: grandTotalPurchase,
+  });
+
+  totalRow.font = { bold: true };
+
+  // Pastikan format Rupiah
+  worksheet.getCell(`I${totalRow.number}`).numFmt = '"Rp" #,##0';
+
+  // =========================
+  // FORMAT
+  // =========================
+  worksheet.getColumn("price").numFmt = '"Rp" #,##0';
+  worksheet.getColumn("subtotal").numFmt = '"Rp" #,##0';
+  worksheet.getColumn("total").numFmt = '"Rp" #,##0';
+  worksheet.getColumn("date").numFmt = "dd-mm-yyyy hh:mm:ss";
+
+  worksheet.eachRow((row) => {
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+  });
+
+  // =========================
+  // RESPONSE DOWNLOAD
+  // =========================
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+
+  const startLabel = formatDDMMYY(startDate);
+  const endLabel = formatDDMMYY(endDate);
+
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=purchase_report_${startLabel}_to_${endLabel}.xlsx`
+  );
+
+  await workbook.xlsx.write(res);
+  res.end();
 });
