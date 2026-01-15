@@ -43,6 +43,9 @@ export default (sequelize) => {
       },
     },
     {
+      defaultScope: {
+        attributes: { exclude: ["createdAt", "updatedAt", "deletedAt"] },
+      },
       tableName: "users",
       timestamps: true,
       paranoid: true,
