@@ -5,7 +5,9 @@ import {
   Category,
   User,
   sequelize,
+  Sequelize,
 } from "../models/index.js";
+const { fn, col, literal } = Sequelize;
 import ExcelJS from "exceljs";
 import user from "../models/user.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -137,6 +139,7 @@ export const createSale = asyncHandler(async (req, res) => {
       // }
 
       const unitPrice = Number(product.sellingPrice);
+      const unitCost = Number(product.purchasePrice);
       const subtotal = unitPrice * quantity;
       totalPrice += subtotal;
 
@@ -146,6 +149,7 @@ export const createSale = asyncHandler(async (req, res) => {
           productId,
           quantity,
           unitPrice,
+          unitCost,
           subtotal,
         },
         { transaction: t }
@@ -290,6 +294,7 @@ export const editSale = asyncHandler(async (req, res) => {
       }
 
       const unitPrice = product.sellingPrice;
+      const unitCost = product.purchasePrice;
       const subtotal = unitPrice * quantity;
       totalPrice += subtotal;
 
@@ -299,6 +304,7 @@ export const editSale = asyncHandler(async (req, res) => {
           productId,
           quantity,
           unitPrice,
+          unitCost,
           subtotal,
         },
         { transaction: t }
@@ -492,4 +498,116 @@ export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
     ],
   });
   return Success(res, 200, "Sales retrieved successfully", sales);
+});
+
+export const getProfitByDate = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return Error(res, 400, "startDate and endDate are required");
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setDate(end.getDate() + 1);
+
+  const result = await SaleDetail.findAll({
+    attributes: [
+      [fn("DATE", col("Sale.date")), "date"],
+      [fn("SUM", literal("unitPrice * quantity")), "totalSale"],
+      [fn("SUM", literal("unitCost * quantity")), "totalHpp"],
+      [fn("SUM", literal("(unitPrice - unitCost) * quantity")), "profit"],
+    ],
+    include: [
+      {
+        model: Sale,
+        attributes: [],
+        where: {
+          date: {
+            [Op.between]: [start, end],
+          },
+        },
+      },
+    ],
+    group: [fn("DATE", col("Sale.date"))],
+    order: [[fn("DATE", col("Sale.date")), "ASC"]],
+    raw: true,
+  });
+
+  const formatted = result.map((row) => {
+    const totalSale = Number(row.totalSale);
+    const profit = Number(row.profit);
+    return {
+      date: row.date,
+      totalSale,
+      totalHpp: Number(row.totalHpp),
+      profit,
+      margin:
+        totalSale > 0 ? Number(((profit / totalSale) * 100).toFixed(2)) : 0,
+    };
+  });
+
+  return Success(res, 200, "Profit by date calculated successfully", formatted);
+});
+export const getProfitPerProduct = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return Error(res, 400, "startDate and endDate are required");
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setDate(end.getDate() + 1);
+
+  const result = await SaleDetail.findAll({
+    attributes: [
+      "productId",
+      [col("Product.name"), "productName"],
+      [fn("SUM", col("quantity")), "qtySold"],
+      [fn("SUM", literal("unitPrice * quantity")), "totalSale"],
+      [fn("SUM", literal("unitCost * quantity")), "totalHpp"],
+      [fn("SUM", literal("(unitPrice - unitCost) * quantity")), "profit"],
+    ],
+    include: [
+      {
+        model: Sale,
+        attributes: [],
+        where: {
+          date: {
+            [Op.between]: [start, end],
+          },
+        },
+      },
+      {
+        model: Product,
+        attributes: [],
+      },
+    ],
+    group: ["productId", "Product.name"],
+    order: [[literal("profit"), "DESC"]],
+    raw: true,
+  });
+
+  const formatted = result.map((row) => {
+    const totalSale = Number(row.totalSale);
+    const profit = Number(row.profit);
+    return {
+      productId: row.productId,
+      productName: row.productName,
+      qtySold: Number(row.qtySold),
+      totalSale,
+      totalHpp: Number(row.totalHpp),
+      profit,
+      margin:
+        totalSale > 0 ? Number(((profit / totalSale) * 100).toFixed(2)) : 0,
+    };
+  });
+
+  return Success(
+    res,
+    200,
+    "Profit per product calculated successfully",
+    formatted
+  );
 });
