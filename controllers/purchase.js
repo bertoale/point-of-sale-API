@@ -14,15 +14,33 @@ import { Success, Error } from "../utils/response.js";
 import { Op } from "sequelize";
 
 export const getAllPurchases = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  const whereClause = {};
+
+  if (startDate && endDate) {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setDate(end.getDate() + 1);
+
+    whereClause.date = {
+      [Op.between]: [start, end],
+    };
+  }
+
   const purchases = await Purchase.findAll({
+    where: whereClause,
     include: [
-      { model: User, attributes: ["id", "name"] },
-      { model: Supplier, attributes: ["id", "name"] },
+      { association: "user", attributes: ["id", "name"] },
       {
-        model: PurchaseDetail,
+        association: "supplier",
+        attributes: ["id", "name", "phoneNumber", "address"],
+      },
+      {
+        association: "purchaseDetail",
         include: [
           {
-            model: Product,
+            association: "product",
             attributes: ["id", "name", "purchasePrice"],
           },
         ],
@@ -33,11 +51,6 @@ export const getAllPurchases = asyncHandler(async (req, res) => {
       ["createdAt", "DESC"],
     ],
   });
-
-  if (!purchases || purchases.length === 0) {
-    res.status(404);
-    throw new Error("Purchases not found");
-  }
 
   return Success(res, 200, "Purchases retrieved successfully", purchases);
 });
@@ -51,13 +64,15 @@ export const GetPurchasesById = asyncHandler(async (req, res) => {
 
   const purchase = await Purchase.findByPk(purchaseId, {
     include: [
-      { model: User, attributes: ["id", "name"] },
-      { model: Supplier, attributes: ["id", "name"] },
+      { model: User, as: "user", attributes: ["id", "name"] },
+      { model: Supplier, as: "supplier", attributes: ["id", "name"] },
       {
         model: PurchaseDetail,
+        as: "purchaseDetail",
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "purchasePrice"],
           },
         ],
@@ -93,7 +108,6 @@ export const createPurchase = asyncHandler(async (req, res) => {
   }
 
   const t = await sequelize.transaction();
-
   try {
     let totalAmount = 0;
     const validatedItems = [];
@@ -104,7 +118,6 @@ export const createPurchase = asyncHandler(async (req, res) => {
       const quantity = item.quantity;
       const unitPrice = item.unitPrice;
       if (!productId || !quantity || !unitPrice) {
-        await t.rollback();
         return Error(
           res,
           400,
@@ -114,8 +127,7 @@ export const createPurchase = asyncHandler(async (req, res) => {
 
       const product = await Product.findByPk(productId);
       if (!product) {
-        await t.rollback();
-        return Error(res, 404, `Product with ID ${productId} not found`);
+        return Error(res, 400, `Product with ID ${productId} not found`);
       }
 
       const subtotal = quantity * unitPrice;
@@ -155,41 +167,45 @@ export const createPurchase = asyncHandler(async (req, res) => {
       );
     }
 
+    // Commit transaction before fetching complete purchase
     await t.commit();
 
-    // fetch the complete purchase with details to return in response
-    const completePurchase = await Purchase.findByPk(purchase.id, {
-      include: [
-        {
-          model: Supplier,
-          attributes: ["id", "name"],
-        },
-        {
-          model: PurchaseDetail,
-          include: [
-            {
-              model: Product,
-              attributes: [
-                "id",
-                "name",
-                "sellingPrice",
-                "purchasePrice",
-                "stock",
-              ],
-              include: [
-                {
-                  model: Category,
-                  attributes: ["id", "name"],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    });
-    return Success(res, 201, "Purchase created successfully", completePurchase);
+    // fetch the complete purchase with details to return in response (outside transaction)
+    // const completePurchase = await Purchase.findByPk(purchase.id, {
+    //   include: [
+    //     {
+    //       model: Supplier,
+    //       attributes: ["id", "name"],
+    //     },
+    //     {
+    //       model: PurchaseDetail,
+    //       include: [
+    //         {
+    //           model: Product,
+    //           attributes: [
+    //             "id",
+    //             "name",
+    //             "sellingPrice",
+    //             "purchasePrice",
+    //             "stock",
+    //           ],
+    //           include: [
+    //             {
+    //               model: Category,
+    //               attributes: ["id", "name"],
+    //             },
+    //           ],
+    //         },
+    //       ],
+    //     },
+    //   ],
+    // });
+    return Success(res, 201, "Purchase created successfully");
   } catch (error) {
-    await t.rollback();
+    // Only rollback if transaction hasn't been committed yet
+    if (!t.finished) {
+      await t.rollback();
+    }
     throw error; // will be caught by asyncHandler
   }
 });
@@ -200,7 +216,13 @@ export const voidPurchase = asyncHandler(async (req, res) => {
     return Error(res, 400, "Purchase ID is required");
   }
   const purchase = await Purchase.findByPk(purchaseId, {
-    include: [{ model: PurchaseDetail, include: [Product] }],
+    include: [
+      {
+        model: PurchaseDetail,
+        as: "purchaseDetail",
+        include: { model: Product, as: "product" },
+      },
+    ],
   });
   if (!purchase) {
     return Error(res, 404, "Purchase not found");
@@ -209,10 +231,10 @@ export const voidPurchase = asyncHandler(async (req, res) => {
   const t = await sequelize.transaction();
   try {
     // revert stock for each purchase detail (atomic decrement)
-    for (const detail of purchase.PurchaseDetails) {
+    for (const detail of purchase.purchaseDetail) {
       await Product.decrement(
         { stock: detail.quantity },
-        { where: { id: detail.Product.id }, transaction: t }
+        { where: { id: detail.product.id }, transaction: t }
       );
     }
     // delete purchase details
@@ -232,18 +254,24 @@ export const voidPurchase = asyncHandler(async (req, res) => {
 
 export const editPurchase = asyncHandler(async (req, res) => {
   const purchaseId = req.params.id;
-  const { date, supplierId, items } = req.body;
+  const { supplierId, items } = req.body;
 
   if (!purchaseId) {
     return Error(res, 400, "Purchase ID is required");
   }
 
-  if (!date || !supplierId || !Array.isArray(items) || items.length === 0) {
-    return Error(res, 400, "Date, supplierId, and items are required");
+  if (!supplierId || !Array.isArray(items) || items.length === 0) {
+    return Error(res, 400, "SupplierId, and items are required");
   }
 
   const purchase = await Purchase.findByPk(purchaseId, {
-    include: [{ model: PurchaseDetail, include: [Product] }],
+    include: [
+      {
+        model: PurchaseDetail,
+        as: "purchaseDetail",
+        include: [{ model: Product, as: "product" }],
+      },
+    ],
   });
 
   if (!purchase) {
@@ -254,10 +282,10 @@ export const editPurchase = asyncHandler(async (req, res) => {
 
   try {
     /** 1️⃣ Rollback stok lama (atomic decrement) */
-    for (const detail of purchase.PurchaseDetails) {
+    for (const detail of purchase.purchaseDetail) {
       await Product.decrement(
         { stock: detail.quantity },
-        { where: { id: detail.Product.id }, transaction: t }
+        { where: { id: detail.product.id }, transaction: t }
       );
     } /** 2️⃣ Hapus purchase detail lama */
     await PurchaseDetail.destroy(
@@ -312,7 +340,6 @@ export const editPurchase = asyncHandler(async (req, res) => {
     /** 6️⃣ Update purchase header */
     await purchase.update(
       {
-        date,
         supplierId,
         totalAmount,
       },
@@ -344,12 +371,18 @@ export const getPurchasesByDate = asyncHandler(async (req, res) => {
       },
     },
     include: [
-      { model: Supplier, attributes: ["id", "name", "phoneNumber", "address"] },
+      {
+        model: Supplier,
+        as: "supplier",
+        attributes: ["id", "name", "phoneNumber", "address"],
+      },
       {
         model: PurchaseDetail,
+        as: "purchaseDetail",
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "purchasePrice"],
           },
         ],
@@ -376,29 +409,21 @@ export const exportPurchaseReportXlsx = asyncHandler(async (req, res) => {
 
   const formatDDMMYY = (date) => {
     const d = new Date(date);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yy = String(d.getFullYear()).slice(-2);
-    return `${dd}-${mm}-${yy}`;
+    return `${String(d.getDate()).padStart(2, "0")}-${String(
+      d.getMonth() + 1
+    ).padStart(2, "0")}-${String(d.getFullYear()).slice(-2)}`;
   };
 
   const purchases = await Purchase.findAll({
     where: {
-      date: {
-        [Op.between]: [start, end],
-      },
+      date: { [Op.between]: [start, end] },
     },
     include: [
-      { model: User, attributes: ["name"] }, // Kasir
-      { model: Supplier, attributes: ["name"] },
+      { association: "user", attributes: ["name"] },
+      { association: "supplier", attributes: ["name"] },
       {
-        model: PurchaseDetail,
-        include: [
-          {
-            model: Product,
-            attributes: ["name", "purchasePrice"],
-          },
-        ],
+        association: "purchaseDetail",
+        include: [{ association: "product", attributes: ["name"] }],
       },
     ],
     order: [["date", "ASC"]],
@@ -424,83 +449,59 @@ export const exportPurchaseReportXlsx = asyncHandler(async (req, res) => {
 
   worksheet.getRow(1).font = { bold: true };
 
-  // =========================
-  // DATA + MERGE LOGIC
-  // =========================
   let currentRow = 2;
-  let grandTotalPurchase = 0;
+  let grandTotal = 0;
 
   purchases.forEach((purchase) => {
-    grandTotalPurchase += Number(purchase.totalAmount);
-
     const startRow = currentRow;
+    grandTotal += Number(purchase.totalAmount || 0);
 
-    // Jika tidak ada detail
-    if (!purchase.PurchaseDetails || purchase.PurchaseDetails.length === 0) {
+    purchase.purchaseDetail.forEach((detail) => {
       worksheet.addRow({
         purchaseId: purchase.id,
         date: purchase.date,
-        kasir: purchase.User?.name,
-        supplier: purchase.Supplier?.name,
+        kasir: purchase.user?.name,
+        supplier: purchase.supplier?.name,
+        product: detail.product?.name,
+        qty: detail.quantity,
+        price: Number(detail.unitPrice),
+        subtotal: Number(detail.subtotal),
         total: Number(purchase.totalAmount),
       });
       currentRow++;
-    } else {
-      purchase.PurchaseDetails.forEach((detail) => {
-        worksheet.addRow({
-          purchaseId: purchase.id,
-          date: purchase.date,
-          kasir: purchase.User?.name,
-          supplier: purchase.Supplier?.name,
-          product: detail.Product?.name,
-          qty: detail.quantity,
-          price: Number(detail.unitPrice),
-          subtotal: Number(detail.subtotal),
-          total: Number(purchase.totalAmount),
-        });
-        currentRow++;
-      });
-    }
+    });
 
     const endRow = currentRow - 1;
 
     if (startRow < endRow) {
-      worksheet.mergeCells(`A${startRow}:A${endRow}`); // Purchase ID
-      worksheet.mergeCells(`B${startRow}:B${endRow}`); // Tanggal
-      worksheet.mergeCells(`C${startRow}:C${endRow}`); // Kasir
-      worksheet.mergeCells(`D${startRow}:D${endRow}`); // Supplier
-      worksheet.mergeCells(`I${startRow}:I${endRow}`); // Total
+      ["A", "B", "C", "D", "I"].forEach((col) => {
+        worksheet.mergeCells(`${col}${startRow}:${col}${endRow}`);
+        worksheet.getCell(`${col}${startRow}`).alignment = {
+          vertical: "middle",
+          horizontal: "center",
+        };
+      });
     }
-
-    ["A", "B", "C", "D", "I"].forEach((col) => {
-      worksheet.getCell(`${col}${startRow}`).alignment = {
-        vertical: "middle",
-        horizontal: "center",
-      };
-    });
   });
 
   // =========================
-  // GRAND TOTAL (SIMPLE)
+  // GRAND TOTAL
   // =========================
   const totalRow = worksheet.addRow({
-    total: grandTotalPurchase,
+    supplier: "GRAND TOTAL",
+    total: grandTotal,
   });
-
   totalRow.font = { bold: true };
-
-  // Pastikan format Rupiah
-  worksheet.getCell(`I${totalRow.number}`).numFmt = '"Rp" #,##0';
 
   // =========================
   // FORMAT
   // =========================
-  worksheet.getColumn("price").numFmt = '"Rp" #,##0';
-  worksheet.getColumn("subtotal").numFmt = '"Rp" #,##0';
-  worksheet.getColumn("total").numFmt = '"Rp" #,##0';
+  ["price", "subtotal", "total"].forEach((key) => {
+    worksheet.getColumn(key).numFmt = '"Rp" #,##0';
+  });
   worksheet.getColumn("date").numFmt = "dd-mm-yyyy hh:mm:ss";
 
-  worksheet.eachRow((row) => {
+  worksheet.eachRow((row) =>
     row.eachCell((cell) => {
       cell.border = {
         top: { style: "thin" },
@@ -508,23 +509,21 @@ export const exportPurchaseReportXlsx = asyncHandler(async (req, res) => {
         bottom: { style: "thin" },
         right: { style: "thin" },
       };
-    });
-  });
+    })
+  );
 
   // =========================
-  // RESPONSE DOWNLOAD
+  // RESPONSE
   // =========================
   res.setHeader(
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   );
-
-  const startLabel = formatDDMMYY(startDate);
-  const endLabel = formatDDMMYY(endDate);
-
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename=purchase_report_${startLabel}_to_${endLabel}.xlsx`
+    `attachment; filename=purchase_report_${formatDDMMYY(
+      startDate
+    )}_to_${formatDDMMYY(endDate)}.xlsx`
   );
 
   await workbook.xlsx.write(res);

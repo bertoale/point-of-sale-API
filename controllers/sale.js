@@ -19,15 +19,18 @@ export const getAllSales = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
+        as: "saleDetail",
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
+        as: "user",
         attributes: ["id", "name"],
       },
     ],
@@ -37,30 +40,32 @@ export const getAllSales = asyncHandler(async (req, res) => {
 
 export const getSaleById = asyncHandler(async (req, res) => {
   const saleId = req.params.id;
+
   const sale = await Sale.findByPk(saleId, {
     include: [
       {
         model: SaleDetail,
+        as: "saleDetail",
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "sellingPrice"],
-          },
-          {
-            model: User,
-            attributes: ["id", "name"],
           },
         ],
       },
       {
         model: User,
+        as: "user",
         attributes: ["id", "name"],
       },
     ],
   });
+
   if (!sale) {
     return Error(res, 404, "Sale not found");
   }
+
   return Success(res, 200, "Sale retrieved successfully", sale);
 });
 
@@ -86,21 +91,24 @@ export const getSaleByCurrentUserAndDate = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
+        as: "saleDetail",
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
+        as: "user",
         attributes: ["id", "name"],
       },
     ],
   });
 
-  return Success(res, 200, "Sales retrieved successfully", { sales });
+  return Success(res, 200, "Sales retrieved successfully", sales);
 });
 
 export const createSale = asyncHandler(async (req, res) => {
@@ -178,7 +186,13 @@ export const voidSale = asyncHandler(async (req, res) => {
     return Error(res, 400, "Sale ID is required");
   }
   const sale = await Sale.findByPk(saleId, {
-    include: [{ model: SaleDetail, include: [{ model: Product }] }],
+    include: [
+      {
+        model: SaleDetail,
+        as: "saleDetail",
+        include: [{ model: Product, as: "product" }],
+      },
+    ],
   });
   if (!sale) {
     return Error(res, 404, "Sale not found");
@@ -187,10 +201,10 @@ export const voidSale = asyncHandler(async (req, res) => {
   const t = await sequelize.transaction();
   try {
     // Rollback stock (atomic increment)
-    for (const detail of sale.SaleDetails) {
+    for (const detail of sale.saleDetail) {
       await Product.increment(
         { stock: detail.quantity },
-        { where: { id: detail.Product.id }, transaction: t }
+        { where: { id: detail.product.id }, transaction: t }
       );
     }
 
@@ -224,19 +238,23 @@ export const getSalesByDate = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
+        as: "saleDetail", // ✅ HARUS sama persis
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
+        as: "user",
         attributes: ["id", "name"],
       },
     ],
   });
+
   return Success(res, 200, "Sales retrieved successfully", sales);
 });
 
@@ -253,7 +271,7 @@ export const editSale = asyncHandler(async (req, res) => {
   }
 
   const sale = await Sale.findByPk(saleId, {
-    include: [{ model: SaleDetail }],
+    include: [{ model: SaleDetail, as: "saleDetail" }],
   });
 
   if (!sale) {
@@ -262,7 +280,7 @@ export const editSale = asyncHandler(async (req, res) => {
 
   await sequelize.transaction(async (t) => {
     /** 1️⃣ Rollback stok lama */
-    for (const detail of sale.SaleDetails) {
+    for (const detail of sale.saleDetail) {
       await Product.increment(
         { stock: detail.quantity },
         { where: { id: detail.productId }, transaction: t }
@@ -352,9 +370,10 @@ export const exportSalesReportXlsx = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
-        include: [{ model: Product, attributes: ["name"] }],
+        as: "saleDetail", // Tambahkan alias agar konsisten
+        include: [{ model: Product, as: "product", attributes: ["name"] }],
       },
-      { model: User, attributes: ["name"] },
+      { model: User, as: "user", attributes: ["name"] },
     ],
     order: [["date", "ASC"]],
   });
@@ -388,12 +407,12 @@ export const exportSalesReportXlsx = asyncHandler(async (req, res) => {
     grandTotalSales += Number(sale.totalPrice);
     const startRow = currentRow;
 
-    sale.SaleDetails.forEach((detail) => {
+    sale.saleDetail.forEach((detail) => {
       worksheet.addRow({
         saleId: sale.id,
         date: sale.date,
-        user: sale.User?.name,
-        product: detail.Product?.name,
+        user: sale.user?.name,
+        product: detail.product?.name,
         qty: detail.quantity,
         price: Number(detail.unitPrice),
         subtotal: Number(detail.subtotal),
@@ -484,15 +503,18 @@ export const getSaleByCashierAndDate = asyncHandler(async (req, res) => {
     include: [
       {
         model: SaleDetail,
+        as: "saleDetail",
         include: [
           {
             model: Product,
+            as: "product",
             attributes: ["id", "name", "sellingPrice"],
           },
         ],
       },
       {
         model: User,
+        as: "user",
         attributes: ["id", "name"],
       },
     ],
@@ -513,7 +535,7 @@ export const getProfitByDate = asyncHandler(async (req, res) => {
 
   const result = await SaleDetail.findAll({
     attributes: [
-      [fn("DATE", col("Sale.date")), "date"],
+      [fn("DATE", col("sale.date")), "date"],
       [fn("SUM", literal("unitPrice * quantity")), "totalSale"],
       [fn("SUM", literal("unitCost * quantity")), "totalHpp"],
       [fn("SUM", literal("(unitPrice - unitCost) * quantity")), "profit"],
@@ -521,6 +543,7 @@ export const getProfitByDate = asyncHandler(async (req, res) => {
     include: [
       {
         model: Sale,
+        as: "sale", // <-- Tambahkan alias sesuai relasi
         attributes: [],
         where: {
           date: {
@@ -529,8 +552,8 @@ export const getProfitByDate = asyncHandler(async (req, res) => {
         },
       },
     ],
-    group: [fn("DATE", col("Sale.date"))],
-    order: [[fn("DATE", col("Sale.date")), "ASC"]],
+    group: [fn("DATE", col("sale.date"))],
+    order: [[fn("DATE", col("sale.date")), "ASC"]],
     raw: true,
   });
 
@@ -549,6 +572,7 @@ export const getProfitByDate = asyncHandler(async (req, res) => {
 
   return Success(res, 200, "Profit by date calculated successfully", formatted);
 });
+
 export const getProfitPerProduct = asyncHandler(async (req, res) => {
   const { startDate, endDate } = req.query;
 
@@ -563,7 +587,7 @@ export const getProfitPerProduct = asyncHandler(async (req, res) => {
   const result = await SaleDetail.findAll({
     attributes: [
       "productId",
-      [col("Product.name"), "productName"],
+      [col("product.name"), "productName"],
       [fn("SUM", col("quantity")), "qtySold"],
       [fn("SUM", literal("unitPrice * quantity")), "totalSale"],
       [fn("SUM", literal("unitCost * quantity")), "totalHpp"],
@@ -572,6 +596,7 @@ export const getProfitPerProduct = asyncHandler(async (req, res) => {
     include: [
       {
         model: Sale,
+        as: "sale", // <-- Tambahkan alias sesuai relasi
         attributes: [],
         where: {
           date: {
@@ -581,10 +606,11 @@ export const getProfitPerProduct = asyncHandler(async (req, res) => {
       },
       {
         model: Product,
+        as: "product", // <-- Tambahkan alias sesuai relasi
         attributes: [],
       },
     ],
-    group: ["productId", "Product.name"],
+    group: ["productId", "product.name"],
     order: [[literal("profit"), "DESC"]],
     raw: true,
   });

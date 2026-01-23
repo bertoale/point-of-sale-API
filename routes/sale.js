@@ -1,6 +1,8 @@
 import {
   getSaleByCashierAndDate,
   getSaleByCurrentUserAndDate,
+  getProfitByDate,
+  getProfitPerProduct,
   getSaleById,
   getSalesByDate,
   getAllSales,
@@ -8,8 +10,6 @@ import {
   editSale,
   voidSale,
   exportSalesReportXlsx,
-  getProfitByDate,
-  getProfitPerProduct,
 } from "../controllers/sale.js";
 import express from "express";
 import { authenticate, authorize } from "../middlewares/auth.js";
@@ -28,7 +28,8 @@ router.put("/:id", authenticate, authorize("owner"), editSale);
 router.delete("/:id", authenticate, authorize("owner"), voidSale);
 router.get(
   "/export/xlsx",
-
+  authenticate,
+  authorize("owner"),
   exportSalesReportXlsx
 );
 router.get(

@@ -43,36 +43,93 @@ export const login = asyncHandler(async (req, res) => {
 
 export const UpdateUser = asyncHandler(async (req, res) => {
   const userId = req.params.id;
-  const { email, password } = req.body;
+  const { name, email, phone, password, role, isActive } = req.body;
   const user = await User.findByPk(userId);
   if (!user) {
     return Error(res, 404, "User not found");
   }
+
+  // Update fields if provided
+  if (name) user.name = name;
   if (email) user.email = email;
+  if (phone) user.phone = phone;
   if (password) user.password = password;
+  if (role) user.role = role;
+  if (typeof isActive === "boolean") user.isActive = isActive;
+
   await user.save();
-  return Success(res, 200, "Profile updated successfully");
+  return Success(res, 200, "User updated successfully", {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    isActive: user.isActive,
+  });
 });
 
 export const createUser = asyncHandler(async (req, res) => {
-  const { name, role, email, phone, password } = req.body;
+  const { name, role, email, phone, password, isActive } = req.body;
   const existingUser = await User.findOne({ where: { email } });
   if (existingUser) {
     return Error(res, 400, "Email already in use");
   }
-  const newUser = await User.create({ name, role, phone, email, password });
+  const newUser = await User.create({
+    name,
+    role,
+    phone,
+    email,
+    password,
+    isActive: typeof isActive === "boolean" ? isActive : true,
+  });
   return Success(res, 201, "User created successfully", {
     id: newUser.id,
     name: newUser.name,
     role: newUser.role,
     email: newUser.email,
     phone: newUser.phone,
+    isActive: newUser.isActive,
   });
 });
 
 export const getUsers = asyncHandler(async (req, res) => {
   const users = await User.findAll({
-    attributes: ["id", "name", "role", "email", "createdAt", "updatedAt"],
+    attributes: [
+      "id",
+      "name",
+      "role",
+      "phone",
+      "isActive",
+      "email",
+      "createdAt",
+      "updatedAt",
+    ],
   });
   return Success(res, 200, "Users retrieved successfully", users);
+});
+
+export const getUserById = asyncHandler(async (req, res) => {
+  const userId = req.params.id;
+  const user = await User.findByPk(userId, {
+    attributes: ["id", "name", "role", "email", "createdAt", "updatedAt"],
+  });
+  if (!user) {
+    return Error(res, 404, "User not found");
+  }
+  return Success(res, 200, "User retrieved successfully", user);
+});
+
+export const logout = asyncHandler(async (req, res) => {
+  res.clearCookie("token");
+  return Success(res, 200, "Logout successful");
+});
+
+export const getSession = asyncHandler(async (req, res) => {
+  const user = req.user;
+  return Success(res, 200, "Session retrieved successfully", {
+    id: user.id,
+    name: user.name,
+    role: user.role,
+    token: req.cookies.token,
+  });
 });

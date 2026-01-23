@@ -4,7 +4,7 @@ import { Success, Error } from "../utils/response.js";
 
 export const GetAllCategories = asyncHandler(async (req, res) => {
   const categories = await Category.findAll();
-  return Success(res, 200, "Categories retrieved successfully", { categories });
+  return Success(res, 200, "Categories retrieved successfully", categories);
 });
 
 export const GetCategoryById = asyncHandler(async (req, res) => {
@@ -13,7 +13,7 @@ export const GetCategoryById = asyncHandler(async (req, res) => {
   if (!category) {
     return Error(res, 404, "Category not found");
   }
-  return Success(res, 200, "Category retrieved successfully", { category });
+  return Success(res, 200, "Category retrieved successfully", category);
 });
 
 export const CreateCategory = asyncHandler(async (req, res) => {

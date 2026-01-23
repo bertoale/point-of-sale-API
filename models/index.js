@@ -46,28 +46,34 @@ const SaleDetail = saleDetailModel(sequelize);
 // =============================
 //category - product
 Category.hasMany(Product, { foreignKey: "categoryId" });
-Product.belongsTo(Category, { foreignKey: "categoryId" });
+Product.belongsTo(Category, { foreignKey: "categoryId", as: "category" });
 //supplier - purchase
 Supplier.hasMany(Purchase, { foreignKey: "supplierId" });
-Purchase.belongsTo(Supplier, { foreignKey: "supplierId" });
+Purchase.belongsTo(Supplier, { foreignKey: "supplierId", as: "supplier" });
 //purchase - purchaseDetail
-Purchase.hasMany(PurchaseDetail, { foreignKey: "purchaseId" });
-PurchaseDetail.belongsTo(Purchase, { foreignKey: "purchaseId" });
+Purchase.hasMany(PurchaseDetail, {
+  foreignKey: "purchaseId",
+  as: "purchaseDetail",
+});
+PurchaseDetail.belongsTo(Purchase, {
+  foreignKey: "purchaseId",
+  as: "purchase",
+});
 //product - purchaseDetail
 Product.hasMany(PurchaseDetail, { foreignKey: "productId" });
-PurchaseDetail.belongsTo(Product, { foreignKey: "productId" });
+PurchaseDetail.belongsTo(Product, { foreignKey: "productId", as: "product" });
 //sale - saleDetail
-Sale.hasMany(SaleDetail, { foreignKey: "saleId" });
-SaleDetail.belongsTo(Sale, { foreignKey: "saleId" });
+Sale.hasMany(SaleDetail, { foreignKey: "saleId", as: "saleDetail" });
+SaleDetail.belongsTo(Sale, { foreignKey: "saleId", as: "sale" });
 //product - saleDetail
 Product.hasMany(SaleDetail, { foreignKey: "productId" });
-SaleDetail.belongsTo(Product, { foreignKey: "productId" });
+SaleDetail.belongsTo(Product, { foreignKey: "productId", as: "product" });
 // user - purchase
 User.hasMany(Purchase, { foreignKey: "userId" });
-Purchase.belongsTo(User, { foreignKey: "userId" });
+Purchase.belongsTo(User, { foreignKey: "userId", as: "user" });
 // user - sale
 User.hasMany(Sale, { foreignKey: "userId" });
-Sale.belongsTo(User, { foreignKey: "userId" });
+Sale.belongsTo(User, { foreignKey: "userId", as: "user" });
 
 // =============================
 // Export semua models

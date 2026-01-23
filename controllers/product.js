@@ -1,19 +1,48 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { Product } from "../models/index.js";
 import { Success, Error } from "../utils/response.js";
+import { Category } from "../models/index.js";
+import { Op } from "sequelize";
 
 export const GetAllProducts = asyncHandler(async (req, res) => {
-  const products = await Product.findAll();
-  return Success(res, 200, "Products retrieved successfully", { products });
+  const { search } = req.query;
+
+  const whereClause = search
+    ? {
+        name: {
+          [Op.like]: `%${search}%`,
+        },
+      }
+    : {};
+
+  const products = await Product.findAll({
+    where: whereClause,
+    include: [
+      {
+        model: Category,
+        as: "category",
+        attributes: ["id", "name"],
+      },
+    ],
+  });
+  return Success(res, 200, "Products retrieved successfully", products);
 });
 
 export const GetProductById = asyncHandler(async (req, res) => {
   const productId = req.params.id;
-  const product = await Product.findByPk(productId);
+  const product = await Product.findByPk(productId, {
+    include: [
+      {
+        model: Category,
+        as: "category",
+        attributes: ["id", "name"],
+      },
+    ],
+  });
   if (!product) {
     return Error(res, 404, "Product not found");
   }
-  return Success(res, 200, "Product retrieved successfully", { product });
+  return Success(res, 200, "Product retrieved successfully", product);
 });
 
 export const CreateProduct = asyncHandler(async (req, res) => {
