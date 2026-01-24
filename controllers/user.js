@@ -17,8 +17,12 @@ export const login = asyncHandler(async (req, res) => {
   if (!isMatch) {
     return Error(res, 401, "Invalid email or password");
   }
+
+  if (!user.isActive) {
+    return Error(res, 403, "User account is inactive. Please contact admin.");
+  }
   // Buat token JWT
-  const token = jwt.sign({ id: user.id }, Config.JWT_SECRET, {
+  const token = jwt.sign({ id: user.id, role: user.role }, Config.JWT_SECRET, {
     expiresIn: Config.JWT_EXPIRES_IN,
   });
 

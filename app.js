@@ -29,6 +29,24 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const status = res.statusCode;
+
+    const result = status >= 200 && status < 400 ? "SUCCESS" : "FAILED";
+
+    console.log(
+      `[${new Date().toISOString()}] ${req.method} ${
+        req.originalUrl
+      } - ${status} (${result}) - ${duration}ms`
+    );
+  });
+
+  next();
+});
 
 // Routes
 app.use("/api/users", userRoutes);
